@@ -1,0 +1,496 @@
+﻿script "skLib"
+global gCurrentUserA, gAllData, gUsersA
+
+on closeStackRequest
+    if the appstack of this stack  is not "true" then pass closeStackRequest
+        answer "Quit application?" with "No" or "Quit"
+        if it is "Quit" then
+            if the environment is not "development" then quit
+            pass closeStackRequest
+        end if
+end closeStackRequest
+
+on resetLoginUI
+   # PURPOSE : Setup for login card; "Launcher" is the splash stack
+    if "Launcher" is in the stacksInUse then
+        dispatch "hideMessage" to group "messageGroup" of card "splash" of stack "launcher"
+        hide stack "launcher"
+    end if
+    lock screen
+    set the visible of this stack to true
+    set the disabled of field "username" of me to false
+    set the disabled of field "password" of me to false
+    set the lockText of field "username" of me to false
+    set the lockText of field "password" of me to false
+    set the text of field "username" to empty
+    set the text of field "password" to empty
+    set the showPassword of field "password" to false
+    set the hilite of widget "showPassword" to false
+    send "toggleEnabled disable" to button "log in"
+    select after field "username"
+    select after field "password"
+    hide widget "showPassword"
+    set the loc of this stack to the screenLoc
+    focus on nothing
+    select empty
+end resetLoginUI
+
+command doLogin
+    local tEmail
+    put getEmailForUsername(field "username") into tEmail
+    cdb_setLogMode "ignore"
+
+    if field "username" is empty or field "password" is empty then
+        answer "You must provide both a username and a password..."
+        exit to top
+    end if
+    // attempt to authenticate via cloud
+    dispatch "showMessage" to group "messageGroup" with "Authenticating account with cloud database..."
+    get cdb_auth(tEmail, field "password", "user")
+    if not cdb_result() then
+        if "pEmail" is in cdb_result("response") then
+            answer "Failed to login:" && "No email found for this username. Please try again..."
+        else
+            answer "Failed to login:" && cdb_result("response")
+        end if
+        dispatch "hideMessage" to group "messageGroup"
+        exit doLogin
+    end if
+    // set user data to global gCurrentUserA
+    dispatch "showMessage" to group "messageGroup" with "Setting user data..."
+    put getUserArrayForEmail(tEmail) into gCurrentUserA
+    put gCurrentUserA[the keys of gCurrentUserA] into gCurrentUserA
+
+    // If you reached here, DO LOGIN STUFF BELOW
+    send "doSuccessfulLogin" to card "login"
+end doLogin
+
+function getStackVersion
+    # PURPOSE : reads the custom prop stackVersion of the stack. This is in format: majorVersion.minorVersion.RCversion.betaVersion
+    # If in beta, RVversion should be 0. If in RC, beta version should be 0. Will return string such as "1.1 RC4," or "0.9 b1"
+    local tNumVersion, tTextVersion
+    put the stackVersion of me into tNumVersion
+    set the itemdelimiter to "."
+    put item 1 of tNumVersion into item 1 of tTextVersion
+    put item 2 of tNumVersion into item 2 of tTextVersion
+    if item 3 of tNumVersion > 0 then
+        put " RC" & item 3 of tNumVersion after tTextVersion
+    else if item 4 of tNumVersion > 0 then
+        put " b" & item 4 of tNumVersion after tTextVersion
+    end if
+    return tTextVersion
+end getStackVersion
+
+function returnNumberedArray pArray
+    # PURPOSE : returns a numerically keyed version of the array provided
+    local x, tArray
+    repeat for each element tElement in pArray
+        add 1 to x
+        put tElement into tArray[x]
+    end repeat
+    return tArray
+end returnNumberedArray
+
+function getDateFromSQLDate pDate
+    # PURPOSE : Returns the SYSTEM DATE corresponding to the SQL date provided
+    local tDate
+    put replaceText(pDate, "-", ",") & ",0,0,0,0" after tDate
+    convert tDate to system date
+    return tDate
+end getDateFromSQLDate
+
+function getSQLDateFromDate pDate
+    # PURPOSE takes the system date provided and returns a SQLDate formated date
+    local tDate
+    convert pDate from system date to dateitems
+    put replaceText(item 1 to 3 of pDate, ",", "-") into tDate
+    return tDate
+end getSQLDateFromDate
+
+function getLVEF pEDV, pESV
+    # PURPOSE : return LVEF for volumes, rounded to 2 decimals
+    if pEDV is empty or pESV is empty then
+        return ""
+    else
+        if pEDV > 10 and pESV > 10 then return round(100 * (pEDV-pESV)/pEDV, 2)
+    end if
+end getLVEF
+
+function getLVSV pEDV, pESV
+    # PURPOSE : return stroke volume for volumes
+    if pEDV is empty or pESV is empty then
+        return ""
+    else
+        if pEDV > 10 and pESV > 10 then return pEDV-pESV
+    end if
+end getLVSV
+
+command filterGrid pFilter, pKey, pDataGrid, pDescriptor
+    # PURPOSE : Generic datagid filtering. Assumes the whole data set is stored in the DG's 'allData' custom property. Also returns a 'count' using pDescriptor for text
+    #pDataGrid =  long id of data grid. pDescriptor used for counts, pDescriptor = the item being counted (eg 'analyses', or 'studies') counts are in 'the result'
+    local tDataA
+    if pFilter is empty then
+        set the dgData of pDataGrid to the allData of pDataGrid
+    else
+        put the allData of pDataGrid into tDataA
+        filter elements of tDataA where each[pKey] contains pFilter
+        set the dgData of pDataGrid to tDataA
+    end if
+    return the number of lines of the dgText of pDataGrid && pDescriptor
+end filterGrid
+
+command filterGridWithKeyValue pGrid, pKey, pValue, pMode// pGrid = long id of data grid ; pMode = equal  | notEqual | match
+    # PURPOSE : Generic data grid filter for qualitative matching (equal, not equa, contains)
+    # PURPOSE : Generic datagid filtering. Assumes the whole data set is stored in the DG's 'allData' custom property. Also returns a 'count' using pDescriptor for text
+    #pDataGrid =  long id of data grid. pDescriptor used for counts, pDescriptor = the item being counted (eg 'analyses', or 'studies') counts are in 'the result'
+    -- TODO : Careful review prior to removing filterGrid. Probable overlap with 'filterGrid' which is likely a the subset 'match' of this command.
+    local tDataA
+    put the allData of pGrid into tDataA
+    if pMode = "notEqual" then
+        filter elements of tDataA where each[pKey] <> pValue
+    else if pMode = "equal" then
+        filter elements of tDataA where each[pKey] = pValue
+    else if pMode = "match" then
+        filter elements of tDataA where each[pKey] contains pValue
+    end if
+    set the dgData of pGrid to tDataA
+end filterGridWithKeyValue
+
+command updateKeyInArray pArray, pKeyName, pOldValue, pNewValue
+    #PURPOSE : Replace value in a key with a new value - eg update reader in gAnalysesA when reader's name is modified in gUsersA
+    # finds all records with old value and then replaces old value with new value in found records, marks array element for update
+    local tArray, tKeys
+    dispatch "showMessage" to group "messageGroup" with "Updating local data..."
+    filter elements of pArray where each[pKeyName] = pOldValue into tArray
+    put the keys of tArray into tKeys
+    repeat for each line tKey in tKeys
+        put pNewValue into pArray[tKey][pKeyName]
+        if pArray[tKey]["TODO"] <> "NEW" then put "UPDATE" into pArray[tKey]["TODO"]
+    end repeat
+    dispatch "hideMessage" to group "messageGroup"
+end updateKeyInArray
+
+function getRandomPassword pLength
+    # PURPOSE : returns random string of pLength chars containg upper and/or lower case chars
+    local tPass, temp, x
+    repeat while x < pLength
+        put random(122) into temp
+        if (temp > 47  and temp < 58) or (temp > 64 and temp < 91) or (temp > 96 and temp < 123) then
+            add 1 to x
+            put numToCodepoint(temp) after tPass
+        end if
+    end repeat
+    return tPass
+end getRandomPassword
+
+function isValidEmailFormat pEmail
+    # PURPOSE : returns boolean describing valilidty of  email provided
+    return matchText(pEmail,"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
+end isValidEmailFormat
+
+function sortArray pArray, pDirection, pSortType, pKey, pUseSystemDate
+    # PURPOSE : Returns a numerical indexed array with with the sort order requested. See notes below.
+    /*
+    - only pArray is mandatory, other params can be passed as ‘empty’ or “”
+    - permissible values for pDirection are: ascending, descending or empty
+    - permissible values for pSortType are: international, numeric, datetime, text, binary or empty
+    - if pDirection is passed as “” or ‘empty’, it will default to ascending
+    - if pSortType is passed as “” or ‘empty’ it will default to text
+    - passing pKey as “” or empty will treat the array as a 1-dimensional array, passing the name of the key will sort it as a multidimensional array
+    - passing empty pUseSystemDate will default to false / / US date format
+    */
+    local tNextIndex, tSortedArray, tSortText
+    get the keys of pArray
+    if pUseSystemDate is not empty then set the useSystemDate to pUseSystemDate
+    put "sort lines of it [[pDirection]] [[pSortType]] by pArray[each]" into tSortText //1-dimensional array
+    if pKey is not empty then put "[pKey]" after tSortText //multidimensional array
+    do merge(tSortText)
+    repeat for each line tKey in it
+        add 1 to tNextIndex
+        put pArray[tKey] into tSortedArray[tNextIndex]
+    end repeat
+    return tSortedArray
+end sortArray
+
+function getTitleCase pText
+    local tText
+    repeat with x = 1 to the number of words in pText
+        put toUpper(char 1 of word x of pText) into char 1 of word x of pText
+    end repeat
+    return pText
+end getTitleCase
+
+command flushDB
+    # PURPOSE :  Push changes to cloud; this includes any cached interactions and changes to arrays (TODO UPDATE OR NEW)
+    # REQUIRES: CloudAdd and CloudUpdate handlers
+    local tError
+    dispatch "showState" to group "cloudSyncGroup" of me with "spinner"
+    cloudAdd
+    if not cdb_result() then put cdb_result("response") into tError["cloudAdd"]
+    cloudUpdate
+    if not cdb_result() then put cdb_result("response") into tError["cloudUpdate"]
+    cdb_flushCache
+    if not cdb_result() then put cdb_result("response") into tError["flushCache"]
+
+    if tError is empty then
+        dispatch "showState" to group "cloudSyncGroup" of me with "cloudSynced"
+        dispatch "hideMessage" to group "messageGroup"
+    else
+        dispatch "showMessage" to group "messageGroup" with "Error pushing changes to cloud..."
+        answer tError["cloudAdd"] & return & tError["cloudUpdate"] & return & tError["flushCache"]
+        dispatch "showState" to group "cloudSyncGroup" of me with "cloudNotSynced"
+    end if
+end flushDB
+
+function getCurrentUserName
+    # PURPOSE : Return human-readable username (first name && surname) for the currently logged in user refleted in gCurrentUserA
+    if gCurrentUserA is empty then
+        return empty
+    else
+        return gCurrentUserA["firstName"] && gCurrentUserA["lastName"]
+    end if
+end getCurrentUserName
+
+function getUsers pProjectName
+    # PURPOSE : get all user data as a numerically keyed array
+    local tUsersTableName, tArray
+    put cdb_userTableName(pProjectName) into tUsersTableName
+    put cdb_read(tUsersTableName, "*", "cloud") into tArray
+    return returnNumberedArray(tArray)
+end getUsers
+
+command updateUserData pEmail, pDataA
+    # PURPOSE : Update user data
+    # array that can contain  keys:  firstName, lastName, email, privilegeSet, analyser (PW change is separate)
+    if pEmail is empty then put gCurrentUserA["email"] into pEmail
+    cdb_updateUserAccount pDataA, pEmail, , false, "CoreLab3" # CDB call - updateUserAccont
+    dispatch "hideMessage" to group "messageGroup"
+end updateUserData
+
+command cloudImport
+    # PURPOSE : import all cloud tables (except cdbUsers) to global array gAllData
+    local tTableList, tTableID, tInputA, tOutputA, x, tTableName, tErr
+    put empty into gAllData
+    put cdb_tableNames() into tTableList
+    if cdb_result("result") = false then put cdb_result("context") && ":" &&  cdb_result("response") & return after tErr
+    repeat for each line tTable in tTableList
+        put cdb_tableID(tTable) into tTableID
+        put empty into tInputA[tTableID]["*"]
+    end repeat
+    put cdb_batchRead(tInputA, "cloud") into tOutputA
+    if cdb_result("result") = false then put cdb_result("context") && ":" &&  cdb_result("response") & return after tErr
+    repeat for each key tTable in tOutputA
+        put cdb_tableName(tTable) into tTableName
+        put 0 into x
+        repeat for each element tElement in tOutputA[tTable]
+            add 1 to x
+            put tElement into gAllData[tTableName][x]
+        end repeat
+    end repeat
+    if tErr is not empty then answer "Errors during cloud import:" & return & tErr
+end cloudImport
+
+command cloudUpdate
+    local tTableList, tTableID, tInputA, tRecordsA, tIndexList, tCdbRecordID
+    dispatch "showMessage" to group "messageGroup" with "Updating cloud records..."
+    put cdb_tableNames() into tTableList
+    repeat for each line tTable in tTableList
+        put cdb_tableID(tTable) into tTableID
+        filter elements of gAllData[tTable] where each["TODO"] = "UPDATE" into tRecordsA
+        put the keys of tRecordsA into tIndexList // list of indexes of table tTable of the global array that need updating
+        repeat for each line tIndex in tIndexList
+            delete variable gAllData[tTable][tIndex]["TODO"]
+            put gAllData[tTable][tIndex]["cdb"]["cdbRecordID"] into tCdbRecordID
+            put gAllData[tTable][tIndex] into tInputA[tTableID][tCdbRecordID]
+        end repeat
+    end repeat
+    cdb_batchUpdate tInputA, "cloud"
+    get cdb_result("recent")
+    dispatch "showMessage" to group "messageGroup" with "Getting updated records from cloud..."
+    cloudImport
+    dispatch "hideMessage" to group "messageGroup"
+end cloudUpdate
+
+command cloudAdd
+    # PURPOSE : search all global arrays for gArray["TODO"] = "NEW" and runs a cdb_batchCreate
+    # NOTE : creation is immediate, as it's meant to be called from flush
+    # Parses the returned array from cdb_batchCreate and updates the [cdb] keys of all affected array elements
+    // IMPORTANT: reload global array data from cloud after call this method
+    local tTableList, tTableID, tInputA, tIndexList
+    dispatch "showMessage" to group "messageGroup" with "Creating cloud records..."
+    
+    put the keys of gAllData into tTableList
+    repeat for each line tTable in tTableList
+        put cdb_tableID(tTable) into tTableID
+        filter elements of gAllData[tTable]  where each["TODO"] = "NEW" into tInputA[tTableID]
+        put the keys of tInputA[tTableID] into tIndexList
+        repeat for each line tIndex in tIndexList // remove the TODO keys from the global array and the array for batchCreate
+            delete variable gAllData[tTable][tIndex]["TODO"]
+            delete variable tInputA[tTableID][tIndex]["TODO"]
+        end repeat
+    end repeat
+    get cdb_batchCreate(tInputA, "cloud")
+    get cdb_result("recent")
+    dispatch "showMessage" to group "messageGroup" with "Getting new cloud data..."
+    cloudImport
+    dispatch "hideMessage" to group "messageGroup"
+end cloudAdd
+
+on closeStack
+    if the appstack of this stack is "true" then 
+        if "launcher" is in the stacksinuse then // launcher is splash stack
+            close stack "launcher"
+            delete stack "launcher"
+        end if
+        if "liveCloud" is in the stacksInUse then  delete stack "liveCloud" // utility stack for liveCloud
+        --        if "skLib" is in the stacksInUse then delete stack "skLib" // general utility lib, uncomment if copying to main app stack and removing from here
+        if "CDB_Header" is in the stacksinuse then delete stack "CDB_Header.lib"
+        if "CDB_Starter" is in the stacksinuse then delete stack "CDB_Starter.lib"
+    end if
+end closeStack
+
+function TtitlecaseForText pText
+    local tText, x, temp
+    set the itemdelimiter to space
+    repeat for each item tWord in pText
+        add 1 to x
+        if char 1 to 2 of tWord = "mc" then
+            put "Mc" & toUpper(char 3 of tWord) & char 4 to -1 of tWord into temp
+        else if char 1 to 3 of tWord = "mac" then
+            put "Mac" & toUpper(char 4 of tWord) & char 5 to -1 of tWord into temp
+        else
+            put toUpper(char 1 of tWord) & char 2 to -1 of tWord into temp
+        end if
+        put temp into item x of tText
+    end repeat
+    return tText
+end TtitlecaseForText
+
+function getRecordForID pTable, pID // the cdbRecordID
+    # PURPOSE : retrieve a record frm the global array gAllData, passing the table gAllData[<tableName>]  and the unique ID stored in gAllData[<tableName>]["cdb"]["cdbRecordID"]
+    # RETURNS : sub-array  with all record data,  indexed with the index in gAllData[<tableName>], eg gAllData["patients"][123][{array}] -> [123][{array}] 
+    local tDataA
+    filter elements of gAllData[pTable] where each["cdb"]["cdbRecordID"] = pID into tDataA
+    return tDataA
+end getRecordForID
+
+function getRecordUnkeyedForID pTable, pID // the cdbRecordID
+    # PURPOSE : retrieve a record frm the global array gAllData, passing the table gAllData[<tableName>]  and the unique ID stored in gAllData[<tableName>]["cdb"]["cdbRecordID"]
+    # RETURNS : sub-array  with all record data without the index from global array, eg gAllData["patients"][123][{array}] -> {array}
+    local tDataA
+    filter elements of gAllData[pTable] where each["cdb"]["cdbRecordID"] = pID into tDataA
+    return tDataA[the keys of tDataA]
+end getRecordUnkeyedForID
+
+function getIndexForID pTable, pID // the cdbRecordID
+    # PURPOSE : retrive the global array index of the gAllData[<tableName>] corresponding to the unique [cdb][cdbRecordID]
+    # RETURNS : index as integer, eg gAllData[<tableName>][<index>][array]  -> index
+    local tDataA
+    filter elements of gAllData[pTable] where each["cdb"]["cdbRecordID"] = pID into tDataA 
+    return the keys of tDataA
+end getIndexForID
+
+function getHiContrastColorForColor  pColor
+    local tR, tG, tB, YIQ, tRGBtriplet
+    put _RGBFromAnyColorFormat (pColor) into tRGBtriplet
+    put item 1 of tRGBtriplet into tR
+    put item 2 of tRGBtriplet into tG
+    put item 3 of tRGBtriplet into tB
+    put ((tR * 299) + (tG * 587) + (tB * 114))/1000 into YIQ
+    if YIQ >= 128 then 
+        return "black"
+    else
+        return "white"
+    end if
+end getHiContrastColorForColor
+
+function _RGBFromAnyColorFormat pColor
+    # take a color as color name, hex or RGB and return RGB
+    local tRGBtriplet
+    if "#" is in pColor then  // convert hex to RGB
+        put _RGBFromHex(pColor) into tRGBtriplet
+    else if  "," is not in pColor then // if not hex and not RGB convert color name to RGB
+        put _RGBFromColorName(pColor) into tRGBtriplet
+    else
+        put pColor into tRGBtriplet
+    end if
+    return tRGBtriplet
+end _RGBFromAnyColorFormat
+
+function _RGBFromColorName pColorName 
+    # Convert any color name to RGB
+    # taken from: https://lessons.livecode.com/m/2592/l/125746-translating-a-color-name-to-an-rgb-numeric-triplet
+    local tRGBColor, tTool
+    put the tool into tTool
+    if pColorName is not a color then return "Error: not a color"
+    create invisible button
+    if the result is not empty then return "Error"
+    set the backgroundColor of last button to pColorName
+    set the foregroundColor of last button to pColorName
+    set the backgroundPixel of last button to the backgroundPixel of last button
+    put the backgroundColor of last button into tRGBColor
+    delete last button
+    send "set the tool to tTool" to me in 10 milliseconds
+    return tRGBColor
+end _RGBFromColorName
+
+function _RGBFromHex pHex
+    # Convert Hex to RGB
+    local tRGB
+    put char 2 to -1 of pHex  into tRGB
+    put "," after char 2 of tRGB
+    put "," before char -2 of tRGB
+    repeat with x = 1 to 3
+        put baseConvert(item x of tRGB, 16, 10) into item x of tRGB
+    end repeat
+    return tRGB
+end _RGBFromHex
+
+function getEmailForUsername pUsername
+    local tArray
+    filter elements of gUsersA where each["username"] = pUsername into tArray
+    return tArray[the keys of tArray]["email"]
+end getEmailForUsername
+
+function getUserArrayForEmail pEmail
+    local tArray
+    filter elements of gUsersA where each["email"] = pEmail into tArray
+    return tArray[the keys of tArray]
+end getUserArrayForEmail 
+
+function getDaysBetween pDate1, pDate2
+    # PURPOSE : return number of days between 2 dayts (pDate2 > pDate1)
+    local tInterval
+    set the useSystemDate to true
+    convert pDate1 from date to seconds
+    convert pDate2 from date to seconds
+    put pDate2 - pDate1 into tInterval
+    return floor(tInterval/(60*60*24))
+end getDaysBetween
+
+
+function stripNumericalIndexesFromText pText
+    # PURPOSE : remove numerical indices from list if present and return the text 
+    local tText
+    put pText into tText
+    repeat with x = 1 to the number of lines of tText
+        if char 1 of line x of tText is a number then
+            delete word 1 of line x of tText
+            put word 1 to -1 of line x of tText into line x of tText
+        end if
+        put toUpper(char 1 of line x of tText)  into char 1 of line x of tText // capitalise 1st word after removing numerical index if present
+    end repeat
+    return tText
+end stripNumericalIndexesFromText
+
+function enumerateText pText
+    # PURPOSE : Add numerical indices to text using HTML ordered list and return the text
+    # NOTE : where manually added numerical indices may already exist, call stripNumericalIndexesFromText on the text first
+    # NOTE : the return is HTML, so use case is setting the htmlText of a field
+    local tText
+    put pText into tText
+    put "<ol><li>" before tText
+    replace return with "</li>" & return & "<li>" in tText
+    put "</li></ol>" after tText
+    return tText
+end enumerateText

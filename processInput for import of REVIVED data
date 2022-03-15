@@ -1,0 +1,67 @@
+command processInput
+   local tIdentifier, tCentre, tContact, tBaselineDate, t6MonthDate, t12MonthDate, tComments, tDeceased, x
+   local tInput, tOutput, tDataBaseline, tData6Month, tData12Month, tRandomLetters, tRandom
+   local tSubjectsTableID, tStudiesTableID, tCentresTableID
+
+   if field "field" is empty then exit processInput
+
+   put cdb_tableID("Subjects") into tSubjectsTableID
+   put cdb_tableID("Studies") into tStudiesTableID
+   put cdb_tableID("Centres") into tCentresTableID
+
+
+   repeat for each line tLine in field "field"
+      set the itemDelimiter to tab
+      add 1 to x
+      put item 1 of tLine into tIdentifier
+      put item 2 of tLine into tCentre
+      put item 3 of tLine into tContact
+      put item 4 of tLine into tBaselineDate
+      put item 5 of tLine into t6MonthDate
+      put item 6 of tLine into t12MonthDate
+      put item 7 of tLine into tComment
+      put item 8 of tLine into tDeceased
+
+      //randomiser
+      repeat with i = 1 to 3
+         repeat
+            get random(90)
+            put it into tRandom
+            if tRandom > 64 and tRandom is not in tRandomLetters then exit repeat
+         end repeat
+         put tRandom into item i of tRandomLetters
+      end repeat
+      repeat with i = 1 to 3
+         put numToCodepoint(item i of tRandomLetters) into item i of tRandomLetters
+      end repeat
+
+      //baseline record
+      put tIdentifier into tInput[tTableID][x]["Identifier"]
+      put tCentre into tInput[tTableID][x]["centre"]
+      put tContact into tInput[tTableID][x]["contact"]
+      put tBaselineDate into tInput[tTableID][x]["studyDate"]
+      put "Baseline" into tInput[tTableID][x]["studyStage"]
+      put tIdentifier & item 1 of tRandomLetters into tInput[tTableID][x]["randomisedIdentifier"]
+      put tComment into tInput[tTableID][x]["Comment"]
+      put tDeceased into tInput[tTableID][x]["Deceased"]
+      add 1 to x //6month
+      put tIdentifier into tInput[tTableID][x]["Identifier"]
+      put tCentre into tInput[tTableID][x]["centre"]
+      put tContact into tInput[tTableID][x]["contact"]
+      put t6MonthDate into tInput[tTableID][x]["studyDate"]
+      put "6-Month" into tInput[tTableID][x]["studyStage"]
+      put tIdentifier & item 2 of tRandomLetters into tInput[tTableID][x]["randomisedIdentifier"]
+      put tComment into tInput[tTableID][x]["Comment"]
+      put tDeceased into tInput[tTableID][x]["Deceased"]
+      add 1 to x //12month
+      put tIdentifier into tInput[tTableID][x]["Identifier"]
+      put tCentre into tInput[tTableID][x]["centre"]
+      put tContact into tInput[tTableID][x]["contact"]
+      put t12MonthDate into tInput[tTableID][x]["studyDate"]
+      put "12-Month" into tInput[tTableID][x]["studyStage"]
+      put tIdentifier & item 3of tRandomLetters into tInput[tTableID][x]["randomisedIdentifier"]
+      put tComment into tInput[tTableID][x]["Comment"]
+      put tDeceased into tInput[tTableID][x]["Deceased"]
+   end repeat
+   breakpoint
+end processInput

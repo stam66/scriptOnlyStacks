@@ -1,0 +1,69 @@
+-- code courtesy of Rolf Kocherhans which used part of Monte Gouldings code
+  local tStackFilePath, tVersion, tStackFilePathForMoving
+  local tStackFilePathInPreferencesFolderForMoving, tDefaultFolder, tPLIN, tFiles
+  local aLine
+
+  put the fileName of this stack into tStackFilePath
+  if tStackFilePath is empty then
+     put word -1 of line 4 of the script of this card into tVersion
+     replace "." with "_" in tVersion
+     put the short name of this stack & "_" before tVersion
+     put ".livecode" after tVersion
+     put tVersion into tStackFilePath
+  end if
+  put tStackFilePath into tStackFilePathForMoving
+  set the itemDel to slash
+  put revEnvironmentUserPluginsPath() & slash & last item of tStackFilePath into tStackFilePathInPreferencesFolderForMoving
+  delete last item of tStackFilePath
+  if tStackFilePath is not revEnvironmentUserPluginsPath() then
+     answer information "This stack should be used as a Plugin" & return  \
+           & return & "Currently the stack does not seem to be in a LiveCode Plugins folder." & return  \
+           & return & "If you choose " & quote & "move me to plugin folder" & quote & " it will be moved to plugin folder" & return  \
+           with "Cancel" or "Move me to plugin folder" as sheet
+
+     if it = "Move me to plugin folder" then
+
+        if there is a file tStackFilePathInPreferencesFolderForMoving then
+           answer "Replace the existing file with the new one?" with "Yes" or "No"
+           if it is "no" then exit to top
+        end if
+
+        -- delete all files containing "bnGuides" except the newly created one
+        put the defaultFolder into tDefaultFolder
+        put revEnvironmentUserPluginsPath() into tPLIN
+        put slash after tPLIN
+        set the defaultFolder to tPLIN
+        put the files into tFiles
+        filter tFiles without "."
+        repeat with i = the number of lines of tFiles down to 1
+           put line i of tFiles into aLine
+           if aLine contains "bnGuides" and not  \
+                 (tPLIN & aLine = tStackFilePathInPreferencesFolderForMoving) then
+              delete file (tPLIN & aLine)
+           end if
+        end repeat
+        set the defaultFolder to tDefaultFolder
+
+        if tStackFilePath is empty then
+           lock messages
+           if char 1 of the version < 7 then
+              save this stack as tStackFilePathInPreferencesFolderForMoving
+           else
+              do sDoSaveFirst
+           end if
+           unlock messages
+        else
+           rename file tStackFilePathForMoving to tStackFilePathInPreferencesFolderForMoving
+        end if
+
+        if char 1 of the version < 8 then
+           send "revUpdatePlugins" to cd 1 of stack "revMenuBar"
+        else
+           send "revIDEUpdatePlugins" to stack "revidelibrary"
+        end if
+        answer information "This stack will close now, please restart it from the Development -> Plugins menu -> bnGuide" as sheet
+        close this stack
+     else
+        exit to top
+     end if
+  end if

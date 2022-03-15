@@ -1,0 +1,31 @@
+local sOutputA, sOutputB, sOutputC
+
+on routine_A pFactor
+	put "ABC_" & pFactor into sOutputA[pFactor]
+end routine_A
+
+on routine_B pFactor
+	put pFactor & "XYZ" into sOutputB
+	routine_C "GHI"
+end routine_B
+
+on routine_C pFactor
+	local tNbr, tData_0, tData_1
+	put - 1 into tNbr
+	routine_A tNbr
+	put pFactor into sOutputC
+
+	put sOutputA[0] into tData_0
+	put sOutputA[- 1] into tData_1
+end routine_C
+
+on mouseup
+	local tData_0, tData_1
+	routine_A 0
+	routine_B "DEF"
+
+	put sOutputA[0] into tData_0
+	put sOutputA[- 1] into tData_1
+	breakpoint
+end mouseup
+
